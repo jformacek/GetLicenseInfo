@@ -12,7 +12,7 @@
 RootModule = '.\GetLicenseInfo.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.0.0'
+ModuleVersion = '1.0.1'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -30,7 +30,7 @@ CompanyName = 'GreyCorbel Solutions'
 Copyright = '(c) Jiri Formacek. All rights reserved.'
 
 # Description of the functionality provided by this module
-# Description = ''
+Description = 'Simple PS module that retrieves and displays (possibly as report) information about licenses assigned to user. Makes use of display names provided by Microsoft in separate CSV file, and displays when product was assigned to user'
 
 # Minimum version of the PowerShell engine required by this module
 # PowerShellVersion = ''

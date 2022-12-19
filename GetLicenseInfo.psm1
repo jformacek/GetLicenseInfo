@@ -39,12 +39,38 @@ Function Get-ProductTable
 
 Function Get-LicenseInfo
 {
-    param
+<#
+.SYNOPSIS
+    Command retrieves license information for user
+.DESCRIPTION
+    Command retrieves license information for user and prepares formatted report. Command makes use of diplay names of products and licenses published by Microsoft as separate downloadable.
+.LINK
+    Specify a URI to a help page, this will show when Get-Help -Online is used.
+.EXAMPLE
+$user = Get-LicenseInfo -UserPrincipalName user@domain.com -TenantId $domain.com
+#display assigned licenses
+$user.AssignedLicenses
+
+Command above retrieves licenses for given user and shows them
+.EXAMPLE
+$user = Get-LicenseInfo -UserPrincipalName user@domain.com -TenantId $domain.com
+#display license report, sorted by assigned time
+$user.AssignedLicenses.Report('assignedDateTime')
+
+Command above retrieves licenses for given user and shows them as report, sorted by SKU assigned date
+
+#>
+[CmdletBinding()]
+param
     (
         [Parameter(Mandatory,ValueFromPipeline)]
-        [string]$UserPrincipalName,
+        [string]
+        #UPN of user. Multiple UPNs can be sent from pipeline
+        $UserPrincipalName,
         [Parameter()]
-        [string]$TenantId = $UserPrincipalName.Split('@')[1]
+        [string]
+        #Tenant Id. If not specified, domain part of UPN is used as tenant id
+        $TenantId = $UserPrincipalName.Split('@')[1]
     )
 
     begin
@@ -70,13 +96,24 @@ Function Get-LicenseInfo
             | Add-Member -MemberType NoteProperty -Name Name -Value ($prods[$sku.skuId]).Name -PassThru `
             | Add-Member -MemberType NoteProperty -Name DisplayName -Value ($prods[$sku.skuId]).DisplayName -PassThru `
             | Add-Member -MemberType ScriptMethod -Name Report -Value {
+                param( [string]$Sort = "DisplayName")
                 $marker = [char]27
                 $bold = "$marker[1m"
                 $underline = "$marker[4m"
                 $resetChanges = "$marker[0m"
         
                 $bold + $underline + "$($this.Name)`t$($this.DisplayName)`t$($this.AssignedDate)" + $resetChanges
-                ($this.AssignedServices | Format-Table)
+                ($this.AssignedServices | Sort-Object $Sort | Format-Table)
+            }
+
+            if([string]::IsNullOrEmpty($sku.Name))
+            {
+                #name not published in downloadable CSV - fallback
+                $sku.Name = ($orgSubscribedSkus | Where-Object{$_.skuId -eq $sku.skuId}).SkuPartNumber
+            }
+            if([string]::IsNullOrEmpty($sku.DisplayName))
+            {
+                $sku.DisplayName = $sku.Name
             }
         }
     
@@ -87,10 +124,19 @@ Function Get-LicenseInfo
             #user may have multiple products assigned containing the same plan
             foreach($sku in $userAssignedSkus.Where{$_.servicePlans.servicePlanId -eq $plan.servicePlanId})
             {
-                $plan.displayName = $prods[$sku.skuId].Plans[$plan.servicePlanId].DisplayName
+                if($null -ne $prods[$sku.skuId])
+                {
+                    $plan.displayName = $prods[$sku.skuId].Plans[$plan.servicePlanId].DisplayName
+                }
+                else
+                {
+                    #display name not published in downloadable CSV - fallback
+                    $plan.displayName = $sku.servicePlans | Where-Object{$_.servicePlanId -eq $plan.servicePlanId}
+                }
                 foreach($userSku in $user.assignedLicenses.Where{$_.skuId -eq $sku.skuId})
                 {
                     $userSku.AssignedServices+=$plan
+                    #PS 5 may not parse datetime out of box
                     if($plan.assignedDateTime -is [string]) {$plan.assignedDateTime = [DateTime]::Parse($plan.assignedDateTime)}
                     if($plan.assignedDateTime -lt $userSku.AssignedDate)
                     {
@@ -98,6 +144,7 @@ Function Get-LicenseInfo
                     }
                 }
             }
+
         }
         $user
     }

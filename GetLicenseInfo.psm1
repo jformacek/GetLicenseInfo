@@ -103,7 +103,7 @@ param
                 $resetChanges = "$marker[0m"
         
                 $bold + $underline + "$($this.Name)`t$($this.DisplayName)`t$($this.AssignedDate)" + $resetChanges
-                ($this.AssignedServices | Sort-Object $Sort | Format-Table)
+                ($this.AssignedServices | Sort-Object $Sort | Format-Table displayName, assignedDateTime, capabilityStatus)
             }
 
             if([string]::IsNullOrEmpty($sku.Name))
@@ -131,7 +131,7 @@ param
                 else
                 {
                     #display name not published in downloadable CSV - fallback
-                    $plan.displayName = $sku.servicePlans | Where-Object{$_.servicePlanId -eq $plan.servicePlanId}
+                    $plan.displayName = ($sku.servicePlans | Where-Object{$_.servicePlanId -eq $plan.servicePlanId}).ServicePlanName
                 }
                 foreach($userSku in $user.assignedLicenses.Where{$_.skuId -eq $sku.skuId})
                 {

@@ -42,16 +42,20 @@ Function Get-LicenseInfo
 <#
 .SYNOPSIS
     Command retrieves license information for user
+
 .DESCRIPTION
     Command retrieves license information for user and prepares formatted report. Command makes use of diplay names of products and licenses published by Microsoft as separate downloadable.
+
 .LINK
-    Specify a URI to a help page, this will show when Get-Help -Online is used.
+    https://github.com/jformacek/GetLicenseInfo
+
 .EXAMPLE
 $user = Get-LicenseInfo -UserPrincipalName user@domain.com -TenantId $domain.com
 #display assigned licenses
 $user.AssignedLicenses
 
 Command above retrieves licenses for given user and shows them
+
 .EXAMPLE
 $user = Get-LicenseInfo -UserPrincipalName user@domain.com -TenantId $domain.com
 #display license report, sorted by assigned time
@@ -59,51 +63,165 @@ $user.AssignedLicenses.Report('assignedDateTime')
 
 Command above retrieves licenses for given user and shows them as report, sorted by SKU assigned date
 
+.EXAMPLE
+$users = Get-LicenseInfo -TenantId mydomain.com -UpnStartsWith a -ShowProogress
+$user.AssignedLicenses
+
+Command above gets and shows license info about all users whose UPN starts with 'a', showing progress
 #>
 [CmdletBinding()]
 param
     (
-        [Parameter(Mandatory,ValueFromPipeline)]
+        [Parameter(Mandatory,ValueFromPipeline,ParameterSetName='SingleUser')]
+        [ValidateScript({$_ -match '@'})]
         [string]
         #UPN of user. Multiple UPNs can be sent from pipeline
         $UserPrincipalName,
         [Parameter()]
         [string]
         #Tenant Id. If not specified, domain part of UPN is used as tenant id
-        $TenantId = $UserPrincipalName.Split('@')[1]
+        $TenantId,
+        [Parameter(ParameterSetName='MultipleUsers')]
+        [int]
+        #page size for graph api call
+        $BatchSize = 100,
+        [Parameter(ParameterSetName='MultipleUsers')]
+        [string]
+        #limit number of returned users by specifying beginning of UPN
+        $UpnStartsWith,
+        [Parameter()]
+        [ValidateSet('Interactive','DeviceCode','WIA')]
+        #type of authentication
+        $AuthMode='Interactive',
+        [switch]
+        #whether to define Report() function on assigned licenses on user
+        $CreateReport,
+        [switch]
+        #whether to show progress UI
+        $ShowProgress
     )
 
     begin
     {
-        if($null -eq $script:authFactories[$TenantId]) {$script:authFactories[$TenantId] = New-AadAuthenticationFactory -TenantId $TenantId -RequiredScopes 'https://graph.microsoft.com/.default' -AuthMode Interactive}
+        switch($PsCmdlet.ParameterSetName)
+        {
+            'SingleUser' {
+                if([string]::IsNullOrWhiteSpace($TenantId))
+                {
+                    $TenantId = $UserPrincipalName.Split('@')[1]
+                }
+                break;
+            }
+            'MultipleUsers' {
+                if([string]::IsNullOrWhiteSpace($TenantId))
+                {
+                    throw 'Tenant ID must be specified'
+                }
+                if($BatchSize -gt 999 -or $BatchSize -lt 1)
+                {
+                    throw 'BatchSize must be between 1 and 999'
+                }
+                break;
+            }
+        }
+
+        if($null -eq $script:authFactories[$TenantId]) {
+            $script:authFactories[$TenantId] = New-AadAuthenticationFactory -TenantId $TenantId -RequiredScopes 'https://graph.microsoft.com/.default' -AuthMode Interactive
+        }
         $rsp = Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/subscribedSkus' -Headers (Get-AadToken -AsHashTable -Factory $script:authFactories[$TenantId])
         $orgSubscribedSkus = $rsp.Value
     }
 
     process
     {
-        $data = Invoke-RestMethod -Uri "https://graph.microsoft.com/v1.0/users/$UserPrincipalName`?`$select=id,assignedLicenses,assignedPlans" -Headers (Get-AadToken -AsHashTable -Factory $script:authFactories[$TenantId])
+        switch($PsCmdlet.ParameterSetName)
+        {
+            'SingleUser' {
+                $user = Invoke-RestMethod `
+                    -Uri "https://graph.microsoft.com/v1.0/users/$UserPrincipalName`?`$select=id,userPrincipalName,assignedLicenses,assignedPlans" `
+                    -Headers (Get-AadToken -AsHashTable -Factory $script:authFactories[$TenantId])
+                $user | ProcessUser -orgSubscribedSkus $orgSubscribedSkus -CreateReport $CreateReport
+                break;
+            }
+            'MultipleUsers' {
+                if([string]::IsNullOrWhiteSpace($UpnStartsWith))
+                {
+                    $Uri = "https://graph.microsoft.com/v1.0/users`?`$select=id,userPrincipalName,assignedLicenses,assignedPlans`&`$filter=assignedLicenses/`$count ne 0`&`$count=true`&`$top=$BatchSize"
+                }
+                else
+                {
+                    $Uri = "https://graph.microsoft.com/v1.0/users`?`$select=id,userPrincipalName,assignedLicenses,assignedPlans`&`$filter=startsWith(userPrincipalName,'$UpnStartsWith') and assignedLicenses/`$count ne 0`&`$count=true`&`$top=$BatchSize"
+                }
+                $total = 0
+                $current = 0
+                do
+                {
+                    $headers = Get-AadToken -AsHashTable -Factory $script:authFactories[$TenantId]
+                    $headers['ConsistencyLevel'] = 'eventual'
+                    $data = Invoke-RestMethod -Uri $Uri -Headers $headers
+                    if($null -ne $data.'@odata.count')
+                    {
+                        $total = $data.'@odata.count'
+                    }
+                    $current+=$data.value.count
+                    if($ShowProgress)
+                    {
+                        Write-Progress -Activity 'Processing' -Status "$current / $total " -PercentComplete ([int]($current * 100 / $total))
+                    }
+                    foreach($user in $data.value)
+                    {
+                        $user | ProcessUser -orgSubscribedSkus $orgSubscribedSkus -CreateReport $CreateReport
+                    }
+                    $Uri = $data.'@odata.nextLink'
+                }while($null -ne $Uri)
+                if($ShowProgress)
+                {
+                    Write-Progress -Activity 'Processing' -Completed
+                }
+                break;
+            }
+        }
+    }
+}
+
+function ProcessUser
+{
+    param
+    (
+        [Parameter(Mandatory,ValueFromPipeline)]
+        $graphUser,
+        [Parameter(Mandatory)]
+        $orgSubscribedSkus,
+        [Parameter(Mandatory)]
+        [bool]$CreateReport
+    )
+
+    process
+    {
         $user = [PSCustomObject]@{
-            UserPrincipalName = $UserPrincipalName
-            Id = $data.id
-            AssignedLicenses = $data.assignedLicenses
+            UserPrincipalName = $graphUser.userPrincipalName
+            Id = $graphUser.id
+            AssignedLicenses = $graphUser.assignedLicenses
         }
         foreach($sku in $user.assignedLicenses)
         {
             $sku `
             | Add-Member -MemberType NoteProperty -Name AssignedServices -Value @() -PassThru `
             | Add-Member -MemberType NoteProperty -Name AssignedDate -Value ([DateTime]::MaxValue) -PassThru `
-            | Add-Member -MemberType NoteProperty -Name Name -Value ($prods[$sku.skuId]).Name -PassThru `
-            | Add-Member -MemberType NoteProperty -Name DisplayName -Value ($prods[$sku.skuId]).DisplayName -PassThru `
-            | Add-Member -MemberType ScriptMethod -Name Report -Value {
-                param( [string]$Sort = "DisplayName")
-                $marker = [char]27
-                $bold = "$marker[1m"
-                $underline = "$marker[4m"
-                $resetChanges = "$marker[0m"
-        
-                $bold + $underline + "$($this.Name)`t$($this.DisplayName)`t$($this.AssignedDate)" + $resetChanges
-                ($this.AssignedServices | Sort-Object $Sort | Format-Table displayName, assignedDateTime, capabilityStatus)
+            | Add-Member -MemberType NoteProperty -Name Name -Value ($script:prods[$sku.skuId]).Name -PassThru `
+            | Add-Member -MemberType NoteProperty -Name DisplayName -Value ($script:prods[$sku.skuId]).DisplayName -PassThru
+            if($CreateReport)
+            {
+                $sku | Add-Member -MemberType ScriptMethod -Name Report -Value {
+                    param( [string]$Sort = "DisplayName")
+                    $marker = [char]27
+                    $bold = "$marker[1m"
+                    $underline = "$marker[4m"
+                    $resetChanges = "$marker[0m"
+            
+                    $bold + $underline + "$($this.Name)`t$($this.DisplayName)`t$($this.AssignedDate)" + $resetChanges
+                    ($this.AssignedServices | Sort-Object $Sort | Format-Table displayName, assignedDateTime, capabilityStatus)
+                }
             }
 
             if([string]::IsNullOrEmpty($sku.Name))
@@ -118,15 +236,15 @@ param
         }
     
         $userAssignedSkus = $orgSubscribedSkus.Where{$_.skuId -in $user.assignedLicenses.skuId}
-        foreach($plan in $data.assignedPlans)
+        foreach($plan in $graphUser.assignedPlans)
         {
             $plan | Add-Member -MemberType NoteProperty -Name displayName -Value $null
             #user may have multiple products assigned containing the same plan
             foreach($sku in $userAssignedSkus.Where{$_.servicePlans.servicePlanId -eq $plan.servicePlanId})
             {
-                if($null -ne $prods[$sku.skuId])
+                if($null -ne $script:prods[$sku.skuId])
                 {
-                    $plan.displayName = $prods[$sku.skuId].Plans[$plan.servicePlanId].DisplayName
+                    $plan.displayName = $script:prods[$sku.skuId].Plans[$plan.servicePlanId].DisplayName
                 }
                 else
                 {
@@ -144,11 +262,9 @@ param
                     }
                 }
             }
-
         }
         $user
     }
 }
-
 if($null -eq $script:prods) {$script:prods = Get-ProductTable}
 $script:authFactories = @{}

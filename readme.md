@@ -20,7 +20,6 @@ $user = Get-LicenseInfo -UserPrincipalName user@domain.com -TenantId $domain.com
 $user = Get-LicenseInfo -UserPrincipalName user@domain.com
 ```
 
-
 ## License info for single user with auto-detected tenant id
 ```powershell
 #get license info about user. Command will detect tenant ID from domain part of userPrincipalName
@@ -35,11 +34,23 @@ $user.AssignedLicenses.Report()
 ## License info for multiple users
 ```powershell
 #get license info about all users whose UPN starts with 'a', showing progress
-$users = Get-LicenseInfo -TenantId mydomain.com -UpnStartsWith a -ShowProogress
+$users = Get-LicenseInfo -TenantId mydomain.com -UpnStartsWith a -ShowProgress
 $user.AssignedLicenses
 ```
 
-## License info for al users in tenant
+## License info for multiple users with limited license set returned
 ```powershell
-Get-LicenseInfo -TenantId mydomain.com -ShowProogress
+#get license info about all users whose UPN starts with 'a', showing progress
+$users = Get-LicenseInfo -TenantId mydomain.com -UpnStartsWith a -ShowProgress -IncludedSkus @('SPE_E3','SPE_E5')
+$user.AssignedLicenses
+```
+
+## Complete license info for all users in tenant
+```powershell
+Get-LicenseInfo -TenantId mydomain.com -ShowProgress
+```
+
+## Complete license info for all users in tenant with user information in each license
+```powershell
+Get-LicenseInfo -TenantId mydomain.com -ShowProgress -IncludeUpnInAssignedLicenses
 ```

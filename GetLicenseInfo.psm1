@@ -242,14 +242,17 @@ function ProcessUser
                     $bold = "$marker[1m"
                     $underline = "$marker[4m"
                     $resetChanges = "$marker[0m"
-            
-                    $bold + $underline + "$($this.Name)`t$($this.DisplayName)`t$($this.AssignedDate)" + $resetChanges
+                    $header = $bold + $underline
+                    if(-not [string]::IsNullOrEmpty($this.userPrincipalName)) {$header+="$($this.UserPrincipalName)`t"}
+                    $header+="$($this.Name)`t$($this.DisplayName)`t$($this.AssignedDate)"
+                    $header+=$resetChanges
+                    $header
                     ($this.AssignedServices | Sort-Object $Sort | Format-Table displayName, assignedDateTime, capabilityStatus)
                 }
             }
             if($IncludeUpnInAssignedLicenses)
             {
-                $sku | Add-Member -MemberType NoteProperty -Name UserPrincipalName -Value $graphUser.userPrincipalName
+                $sku | Add-Member -MemberType NoteProperty -Name UserPrincipalName -Value $User.UserPrincipalName
             }
 
             if([string]::IsNullOrEmpty($sku.Name))

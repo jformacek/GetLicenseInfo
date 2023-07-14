@@ -12,7 +12,7 @@
 RootModule = '.\GetLicenseInfo.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.0.4'
+ModuleVersion = '1.0.5'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -101,7 +101,7 @@ PrivateData = @{
         # LicenseUri = ''
 
         # A URL to the main website for this project.
-        # ProjectUri = ''
+        ProjectUri = 'https://github.com/jformacek/GetLicenseInfo'
 
         # A URL to an icon representing this module.
         # IconUri = ''

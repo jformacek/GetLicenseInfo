@@ -98,7 +98,15 @@ param
         $CreateReport,
         [switch]
         #whether to show progress UI
-        $ShowProgress
+        $ShowProgress,
+        [switch]
+        #whether each assigned license sku shall also contain Upn of owning user
+        $IncludeUpnInAssignedLicenses,
+        #only process SKUs in the list (SKU id or SKU displayName)
+        [string[]]$IncludedSkus=@(),
+        #omit SKUs in the list (SKU id or SKU displayName) from results
+        [string[]]$ExcludedSkus=@()
+        
     )
 
     begin
@@ -128,8 +136,26 @@ param
         if($null -eq $script:authFactories[$TenantId]) {
             $script:authFactories[$TenantId] = New-AadAuthenticationFactory -TenantId $TenantId -RequiredScopes 'https://graph.microsoft.com/.default' -AuthMode Interactive
         }
-        $rsp = Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/subscribedSkus' -Headers (Get-AadToken -AsHashTable -Factory $script:authFactories[$TenantId])
-        $orgSubscribedSkus = $rsp.Value
+        if($null -eq $script:orgSkus)
+        {
+            $rsp = Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/subscribedSkus' -Headers (Get-AadToken -AsHashTable -Factory $script:authFactories[$TenantId])
+            $script:orgSkus = $rsp.Value
+        }
+        if($IncludedSkus.Count -gt 0)
+        {
+            $orgSubscribedSkus = $script:orgSkus.Where{($_.skuId -in $IncludedSkus) -or ($_.skuPartNumber -in $IncludedSkus)}
+        }
+        else
+        {
+            if($ExcludedSkus.Count -gt 0)
+            {
+                $orgSubscribedSkus = $script:orgSkus.Where{($_.skuId -notin $ExcludedSkus) -or ($_.skuPartNumber -notin $ExcludedSkus)}
+            }
+            else
+            {
+                $orgSubscribedSkus = $script:orgSkus
+            }
+        }
     }
 
     process
@@ -168,10 +194,7 @@ param
                     {
                         Write-Progress -Activity 'Processing' -Status "$current / $total " -PercentComplete ([int]($current * 100 / $total))
                     }
-                    foreach($user in $data.value)
-                    {
-                        $user | ProcessUser -orgSubscribedSkus $orgSubscribedSkus -CreateReport $CreateReport
-                    }
+                    $data.value | ProcessUser -orgSubscribedSkus $orgSubscribedSkus -CreateReport $CreateReport -IncludeUpnInAssignedLicenses $IncludeUpnInAssignedLicenses
                     $Uri = $data.'@odata.nextLink'
                 }while($null -ne $Uri)
                 if($ShowProgress)
@@ -189,11 +212,12 @@ function ProcessUser
     param
     (
         [Parameter(Mandatory,ValueFromPipeline)]
-        $graphUser,
+        [PSCustomObject]$graphUser,
         [Parameter(Mandatory)]
         $orgSubscribedSkus,
         [Parameter(Mandatory)]
-        [bool]$CreateReport
+        [bool]$CreateReport,
+        [bool]$IncludeUpnInAssignedLicenses
     )
 
     process
@@ -201,7 +225,7 @@ function ProcessUser
         $user = [PSCustomObject]@{
             UserPrincipalName = $graphUser.userPrincipalName
             Id = $graphUser.id
-            AssignedLicenses = $graphUser.assignedLicenses
+            AssignedLicenses = $graphUser.assignedLicenses.Where{$_.skuId -in $orgSubscribedSkus.skuId}
         }
         foreach($sku in $user.assignedLicenses)
         {
@@ -209,7 +233,7 @@ function ProcessUser
             | Add-Member -MemberType NoteProperty -Name AssignedServices -Value @() -PassThru `
             | Add-Member -MemberType NoteProperty -Name AssignedDate -Value ([DateTime]::MaxValue) -PassThru `
             | Add-Member -MemberType NoteProperty -Name Name -Value ($script:prods[$sku.skuId]).Name -PassThru `
-            | Add-Member -MemberType NoteProperty -Name DisplayName -Value ($script:prods[$sku.skuId]).DisplayName -PassThru
+            | Add-Member -MemberType NoteProperty -Name DisplayName -Value ($script:prods[$sku.skuId]).DisplayName
             if($CreateReport)
             {
                 $sku | Add-Member -MemberType ScriptMethod -Name Report -Value {
@@ -222,6 +246,10 @@ function ProcessUser
                     $bold + $underline + "$($this.Name)`t$($this.DisplayName)`t$($this.AssignedDate)" + $resetChanges
                     ($this.AssignedServices | Sort-Object $Sort | Format-Table displayName, assignedDateTime, capabilityStatus)
                 }
+            }
+            if($IncludeUpnInAssignedLicenses)
+            {
+                $sku | Add-Member -MemberType NoteProperty -Name UserPrincipalName -Value $graphUser.userPrincipalName
             }
 
             if([string]::IsNullOrEmpty($sku.Name))

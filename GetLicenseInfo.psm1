@@ -37,7 +37,125 @@ Function Get-ProductTable
     }
 }
 
-Function Get-LicenseInfo
+function Connect-Tenant
+{
+    <#
+.SYNOPSIS
+    Sets up the connection to tenant
+
+.DESCRIPTION
+    Sets up connection parameters to tenant (and to internet)
+
+.OUTPUTS
+    List of tenants already connected to, along with authentication provider
+#>
+
+    param
+    (
+        [Parameter(ParameterSetName = 'PublicClient')]
+        [Parameter(ParameterSetName = 'ConfidentialClientWithSecret')]
+        [Parameter(ParameterSetName = 'ConfidentialClientWithCertificate')]
+        [string]
+            #Id of tenant where to autenticate the user. Can be tenant id, or any registerd DNS domain
+            #Not necessary when connecting with Managed Identity, otherwise ncesessary
+        $TenantId,
+
+        [Parameter()]
+        [string]
+            #ClientId of application that gets token to CosmosDB.
+            #Default: well-known clientId for Azure PowerShell - it already has pre-configured Delegated permission to access CosmosDB resource
+        $ClientId = '1950a258-227b-4e31-a9cf-717495945fc2',
+
+        [Parameter()]
+        [Uri]
+            #RedirectUri for the client
+            #Default: default MSAL redirect Uri
+        $RedirectUri,
+
+        [Parameter(ParameterSetName = 'ConfidentialClientWithSecret')]
+        [string]
+            #Client secret for ClientID
+            #Used to get access as application rather than as calling user
+        $ClientSecret,
+
+        [Parameter(ParameterSetName = 'ConfidentialClientWithCertificate')]
+        [System.Security.Cryptography.X509Certificates.X509Certificate2]
+            #Authentication certificate for ClientID
+            #Used to get access as application rather than as calling user
+        $X509Certificate,
+
+        [Parameter()]
+        [string]
+            #AAD auth endpoint
+            #Default: endpoint for public cloud
+        $LoginApi = 'https://login.microsoftonline.com',
+        
+        [Parameter(Mandatory, ParameterSetName = 'PublicClient')]
+        [ValidateSet('Interactive', 'DeviceCode', 'WIA', 'WAM')]
+        [string]
+            #How to authenticate client - via web view or via device code flow
+        $AuthMode,
+        
+        [Parameter(ParameterSetName = 'PublicClient')]
+        [string]
+            #Username hint for interactive authentication flows
+        $UserNameHint,
+
+        [Parameter(ParameterSetName = 'MSI')]
+        [Switch]
+            #tries to get parameters from environment and token from internal endpoint provided by Azure MSI support
+        $UseManagedIdentity,
+
+        [Parameter()]
+        [System.Net.WebProxy]
+            #Name of the proxy if connection to Azure has to go via proxy server
+        $Proxy
+    )
+
+    process
+    {
+        if($null -ne $proxy)
+        {
+            [system.net.webrequest]::defaultwebproxy = $proxy
+        }
+        try {
+                switch($PSCmdlet.ParameterSetName)
+                {
+                    'PublicClient' {
+                        $script:AuthFactory = New-AadAuthenticationFactory -TenantId $TenantId -ClientId $ClientId -RedirectUri $RedirectUri -LoginApi $LoginApi -AuthMode $AuthMode -DefaultUsername $UserNameHint
+                        break;
+                    }
+                    'ConfidentialClientWithSecret' {
+                        $script:AuthFactory = New-AadAuthenticationFactory -TenantId $TenantId -ClientId $ClientId -RedirectUri $RedirectUri -ClientSecret $clientSecret -LoginApi $LoginApi
+                        break;
+                    }
+                    'ConfidentialClientWithCertificate' {
+                        $script:AuthFactory = New-AadAuthenticationFactory -TenantId $TenantId -ClientId $ClientId -X509Certificate $X509Certificate -LoginApi $LoginApi
+                        break;
+                    }
+                    'MSI' {
+                        if($ClientId -ne '1950a258-227b-4e31-a9cf-717495945fc2')
+                        {
+                            $script:AuthFactory = New-AadAuthenticationFactory -ClientId $clientId -UseManagedIdentity
+                        }
+                        else 
+                        {
+                            #default clientId does not fit here - we do not pass it to the factory
+                            $script:AuthFactory = New-AadAuthenticationFactory -UseManagedIdentity
+                        }
+                        break;
+                    }
+                }
+                $script:AuthFactory
+        }
+        catch {
+            throw
+        }
+
+    }
+}
+
+Function Get-Info
 {
 <#
 .SYNOPSIS
@@ -77,10 +195,6 @@ param
         [string]
         #UPN of user. Multiple UPNs can be sent from pipeline
         $UserPrincipalName,
-        [Parameter()]
-        [string]
-        #Tenant Id. If not specified, domain part of UPN is used as tenant id
-        $TenantId,
         [Parameter(ParameterSetName='MultipleUsers')]
         [int]
         #page size for graph api call
@@ -89,10 +203,6 @@ param
         [string]
         #limit number of returned users by specifying beginning of UPN
         $UpnStartsWith,
-        [Parameter()]
-        [ValidateSet('Interactive','DeviceCode','WIA')]
-        #type of authentication
-        $AuthMode='Interactive',
         [switch]
         #whether to define Report() function on assigned licenses on user
         $CreateReport,
@@ -106,25 +216,14 @@ param
         [string[]]$IncludedSkus=@(),
         #omit SKUs in the list (SKU id or SKU displayName) from results
         [string[]]$ExcludedSkus=@()
-        
     )
 
     begin
     {
+
         switch($PsCmdlet.ParameterSetName)
         {
-            'SingleUser' {
-                if([string]::IsNullOrWhiteSpace($TenantId))
-                {
-                    $TenantId = $UserPrincipalName.Split('@')[1]
-                }
-                break;
-            }
             'MultipleUsers' {
-                if([string]::IsNullOrWhiteSpace($TenantId))
-                {
-                    throw 'Tenant ID must be specified'
-                }
                 if($BatchSize -gt 999 -or $BatchSize -lt 1)
                 {
                     throw 'BatchSize must be between 1 and 999'
@@ -133,12 +232,16 @@ param
             }
         }
 
-        if($null -eq $script:authFactories[$TenantId]) {
-            $script:authFactories[$TenantId] = New-AadAuthenticationFactory -TenantId $TenantId -RequiredScopes 'https://graph.microsoft.com/.default' -AuthMode Interactive
+        if($null -eq $script:AuthFactory)
+        {
+            throw "Please call 'Connect-Tenant' first"
         }
+
+        if($null -eq $script:prods) {$script:prods = Get-ProductTable}
+
         if($null -eq $script:orgSkus)
         {
-            $rsp = Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/subscribedSkus' -Headers (Get-AadToken -AsHashTable -Factory $script:authFactories[$TenantId])
+            $rsp = Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/subscribedSkus' -Headers (Get-AadToken -AsHashTable -Factory $script:authFactory -Scopes 'https://graph.microsoft.com/.default')
             $script:orgSkus = $rsp.Value
         }
         if($IncludedSkus.Count -gt 0)
@@ -165,7 +268,7 @@ param
             'SingleUser' {
                 $user = Invoke-RestMethod `
                     -Uri "https://graph.microsoft.com/v1.0/users/$UserPrincipalName`?`$select=id,userPrincipalName,assignedLicenses,assignedPlans" `
-                    -Headers (Get-AadToken -AsHashTable -Factory $script:authFactories[$TenantId])
+                    -Headers (Get-AadToken -AsHashTable -Factory $script:authFactory -Scopes 'https://graph.microsoft.com/.default')
                 $user | ProcessUser -orgSubscribedSkus $orgSubscribedSkus -CreateReport $CreateReport
                 break;
             }
@@ -182,7 +285,7 @@ param
                 $current = 0
                 do
                 {
-                    $headers = Get-AadToken -AsHashTable -Factory $script:authFactories[$TenantId]
+                    $headers = Get-AadToken -AsHashTable -Factory $script:authFactory -Scopes 'https://graph.microsoft.com/.default'
                     $headers['ConsistencyLevel'] = 'eventual'
                     $data = Invoke-RestMethod -Uri $Uri -Headers $headers
                     if($null -ne $data.'@odata.count')
@@ -269,7 +372,10 @@ function ProcessUser
         $userAssignedSkus = $orgSubscribedSkus.Where{$_.skuId -in $user.assignedLicenses.skuId}
         foreach($plan in $graphUser.assignedPlans)
         {
-            $plan | Add-Member -MemberType NoteProperty -Name displayName -Value $null
+            if($plan.psobject.properties.name -notcontains 'displayName')
+            {
+                $plan | Add-Member -MemberType NoteProperty -Name displayName -Value $null
+            }
             #user may have multiple products assigned containing the same plan
             foreach($sku in $userAssignedSkus.Where{$_.servicePlans.servicePlanId -eq $plan.servicePlanId})
             {
@@ -297,5 +403,18 @@ function ProcessUser
         $user
     }
 }
-if($null -eq $script:prods) {$script:prods = Get-ProductTable}
-$script:authFactories = @{}
+if($null -eq 'TrustAllCertsPolicy' -as [type])
+{
+    add-type @"
+    using System.Net;
+    using System.Security.Cryptography.X509Certificates;
+    public class TrustAllCertsPolicy : ICertificatePolicy {
+        public bool CheckValidationResult(
+            ServicePoint srvPoint, X509Certificate certificate,
+            WebRequest request, int certificateProblem) {
+            return true;
+        }
+    }
+"@    
+}
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

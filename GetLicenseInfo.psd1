@@ -12,7 +12,7 @@
 RootModule = '.\GetLicenseInfo.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.0.5'
+ModuleVersion = '1.0.6'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -51,7 +51,7 @@ Description = 'Simple PS module that retrieves and displays (possibly as report)
 # ProcessorArchitecture = ''
 
 # Modules that must be imported into the global environment prior to importing this module
-RequiredModules = @('AadAuthenticationFactory')
+RequiredModules = @(@{ModuleName="AadAuthenticationFactory"; ModuleVersion="3.0.0"; GUID='9d860f96-4bde-41d3-890b-1a3f51c34d68'})
 
 # Assemblies that must be loaded prior to importing this module
 # RequiredAssemblies = @()
@@ -69,7 +69,7 @@ RequiredModules = @('AadAuthenticationFactory')
 # NestedModules = @()
 
 # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-FunctionsToExport = @('Get-LicenseInfo')
+FunctionsToExport = @('Get-Info','Connect-Tenant')
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = @()
@@ -126,7 +126,7 @@ PrivateData = @{
 # HelpInfoURI = ''
 
 # Default prefix for commands exported from this module. Override the default prefix using Import-Module -Prefix.
-# DefaultCommandPrefix = ''
+DefaultCommandPrefix = 'License'
 
 }
 

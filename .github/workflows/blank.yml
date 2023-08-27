@@ -1,0 +1,57 @@
+name: Publish-GetLicenseInfo
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '**'
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  # This workflow contains a single job called "publishToGallery"
+  publishToGallery:
+    # The type of runner that the job will run on
+    runs-on: windows-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+    - name: Checkout
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      uses: actions/checkout@v2
+
+    - name: Build
+      shell: pwsh
+      run: |
+        New-Item -Path "$env:GITHUB_WORKSPACE\Module" -ItemType Directory
+        New-Item -Path "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo" -ItemType Directory
+        Copy-Item -Path "$env:GITHUB_WORKSPACE\LICENSE" -Destination "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo\LICENSE.txt" -Force
+        Copy-Item -Path "$env:GITHUB_WORKSPACE\LICENSE" -Destination "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo\GetLicenseInfo.psd1" -Force
+        Copy-Item -Path "$env:GITHUB_WORKSPACE\LICENSE" -Destination "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo\GetLicenseInfo.psm1" -Force
+
+    - name: Install prerequisites
+      shell: pwsh
+      run: |
+        Install-Module AadAuthenticationFactory -AllowPrerelease -Force -Scope CurrentUser -Verbose
+      
+    - name: Publish
+      #Publish to PS Gallery
+      shell: pwsh
+      env:
+        SECRET: ${{ secrets.PSGallery_APIKey }}
+      run: |
+        write-host "Publishing from: $env:GITHUB_WORKSPACE\Module\GetLicenseInfo"
+        try
+        {
+          #setup PSModulePath
+          $env:PSModulePath = "$env:PSModulePath;$env:GITHUB_WORKSPACE\Module"
+          "PSModulePath: $env:PSModulePath"
+
+          Publish-Module -Path "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo" -NuGetApiKey "$env:SECRET"
+        }
+        catch
+        {
+          Write-Host "Error: $($_.Exception)"
+          throw
+        }

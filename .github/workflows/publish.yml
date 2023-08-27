@@ -27,8 +27,8 @@ jobs:
         New-Item -Path "$env:GITHUB_WORKSPACE\Module" -ItemType Directory
         New-Item -Path "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo" -ItemType Directory
         Copy-Item -Path "$env:GITHUB_WORKSPACE\LICENSE" -Destination "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo\LICENSE.txt" -Force
-        Copy-Item -Path "$env:GITHUB_WORKSPACE\LICENSE" -Destination "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo\GetLicenseInfo.psd1" -Force
-        Copy-Item -Path "$env:GITHUB_WORKSPACE\LICENSE" -Destination "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo\GetLicenseInfo.psm1" -Force
+        Copy-Item -Path "$env:GITHUB_WORKSPACE\GetLicenseInfo.psd1" -Destination "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo\GetLicenseInfo.psd1" -Force
+        Copy-Item -Path "$env:GITHUB_WORKSPACE\GetLicenseInfo.psm1" -Destination "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo\GetLicenseInfo.psm1" -Force
 
     - name: Install prerequisites
       shell: pwsh

@@ -62,9 +62,9 @@ function Connect-Tenant
 
         [Parameter()]
         [string]
-            #ClientId of application that gets token to CosmosDB.
-            #Default: well-known clientId for Azure PowerShell - it already has pre-configured Delegated permission to access CosmosDB resource
-        $ClientId = '1950a258-227b-4e31-a9cf-717495945fc2',
+            #ClientId of application that gets token to Graph API.
+            #Default: well-known clientId for Azure PowerShell
+        $ClientId = (Get-AadDefaultClientId),
 
         [Parameter()]
         [Uri]
@@ -93,7 +93,7 @@ function Connect-Tenant
         [Parameter(Mandatory, ParameterSetName = 'PublicClient')]
         [ValidateSet('Interactive', 'DeviceCode', 'WIA', 'WAM')]
         [string]
-            #How to authenticate client - via web view or via device code flow
+            #How to authenticate client
         $AuthMode,
         
         [Parameter(ParameterSetName = 'PublicClient')]
@@ -108,7 +108,7 @@ function Connect-Tenant
 
         [Parameter()]
         [System.Net.WebProxy]
-            #Name of the proxy if connection to Azure has to go via proxy server
+            #Proxy configuration for cases when internet is begind proxy
         $Proxy
     )
 
@@ -134,15 +134,7 @@ function Connect-Tenant
                         break;
                     }
                     'MSI' {
-                        if($ClientId -ne '1950a258-227b-4e31-a9cf-717495945fc2')
-                        {
-                            $script:AuthFactory = New-AadAuthenticationFactory -ClientId $clientId -UseManagedIdentity
-                        }
-                        else 
-                        {
-                            #default clientId does not fit here - we do not pass it to the factory
-                            $script:AuthFactory = New-AadAuthenticationFactory -UseManagedIdentity
-                        }
+                        $script:AuthFactory = New-AadAuthenticationFactory -ClientId $clientId -UseManagedIdentity
                         break;
                     }
                 }
@@ -151,7 +143,6 @@ function Connect-Tenant
         catch {
             throw
         }
-
     }
 }
 
@@ -234,7 +225,7 @@ param
 
         if($null -eq $script:AuthFactory)
         {
-            throw "Please call 'Connect-Tenant' first"
+            throw "Please call 'Connect-LicenseTenant' first"
         }
 
         if($null -eq $script:prods) {$script:prods = Get-ProductTable}
@@ -269,7 +260,7 @@ param
                 $user = Invoke-RestMethod `
                     -Uri "https://graph.microsoft.com/v1.0/users/$UserPrincipalName`?`$select=id,userPrincipalName,assignedLicenses,assignedPlans" `
                     -Headers (Get-AadToken -AsHashTable -Factory $script:authFactory -Scopes 'https://graph.microsoft.com/.default')
-                $user | ProcessUser -orgSubscribedSkus $orgSubscribedSkus -CreateReport $CreateReport
+                $user | ProcessUser -orgSubscribedSkus $orgSubscribedSkus -CreateReport $CreateReport -IncludeUpnInAssignedLicenses $IncludeUpnInAssignedLicenses
                 break;
             }
             'MultipleUsers' {

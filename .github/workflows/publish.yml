@@ -55,6 +55,11 @@ jobs:
         Write-Host "Signed files summary:"
         Get-AuthenticodeSignature -FilePath $files
 
+    - name: Install prerequisites
+      shell: pwsh
+      run: |
+        Install-Module AadAuthenticationFactory -AllowPrerelease -Force -Scope CurrentUser
+
     - name: Publish
       #Publish to PS Gallery
       shell: pwsh

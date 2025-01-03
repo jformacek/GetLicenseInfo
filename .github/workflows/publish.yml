@@ -31,12 +31,6 @@ jobs:
         - name: Install AzureSignTool
         run:  dotnet tool install --global AzureSignTool
    
-    - name: Install prerequisites
-      shell: pwsh
-      run: |
-        Install-Module AadAuthenticationFactory -AllowPrerelease -Force -Scope CurrentUser -Verbose
-  
-        
     - name: Install AzureSignTool
       run:  dotnet tool install --global AzureSignTool
 

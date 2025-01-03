@@ -14,44 +14,72 @@ jobs:
   publishToGallery:
     # The type of runner that the job will run on
     runs-on: windows-latest
+    env: 
+      MODULE_NAME: GetLicenseInfo
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-    - name: Checkout
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
-    - name: Build
+    - name: Build module
       shell: pwsh
       run: |
-        New-Item -Path "$env:GITHUB_WORKSPACE\Module" -ItemType Directory
-        New-Item -Path "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo" -ItemType Directory
-        Copy-Item -Path "$env:GITHUB_WORKSPACE\LICENSE" -Destination "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo\LICENSE.txt" -Force
-        Copy-Item -Path "$env:GITHUB_WORKSPACE\GetLicenseInfo.psd1" -Destination "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo\GetLicenseInfo.psd1" -Force
-        Copy-Item -Path "$env:GITHUB_WORKSPACE\GetLicenseInfo.psm1" -Destination "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo\GetLicenseInfo.psm1" -Force
-
+        $moduleName = $env:MODULE_NAME
+        Copy-Item -Path "$env:GITHUB_WORKSPACE\LICENSE" -Destination "$env:GITHUB_WORKSPACE\Module\$moduleName\LICENSE.txt" -Force
+        "Building module"
+        &"$env:GITHUB_WORKSPACE\Workflow\BuildModule.ps1" -RootPath "$env:GITHUB_WORKSPACE" -ModuleName $moduleName
+        - name: Install AzureSignTool
+        run:  dotnet tool install --global AzureSignTool
+   
     - name: Install prerequisites
       shell: pwsh
       run: |
         Install-Module AadAuthenticationFactory -AllowPrerelease -Force -Scope CurrentUser -Verbose
-      
+  
+        
+    - name: Install AzureSignTool
+      run:  dotnet tool install --global AzureSignTool
+
+    - name: Sign files
+      shell: pwsh
+      run: |
+        $files = Get-ChildItem "$env:GITHUB_WORKSPACE\Module\$env:MODULE_NAME" -File -Recurse -Include *.ps1, *.ps1xml, *.psd1, *.psm1, *.pssc, *.psrc, *.cdxml, *.dll
+        try {
+            foreach ($file in $files) {
+                azuresigntool sign `
+                    -kvu ${{ vars.CODESIGNING_KEYVAULTURI }} `
+                    -kvi ${{ vars.TENANTINTEGRATION_CLIENTID }} `
+                    -kvt ${{ vars.TENANTINTEGRATION_TENANTID }} `
+                    -kvs ${{ secrets.TENANTINTEGRATION_CLIENTSECRET }} `
+                    -kvc ${{ vars.CODESIGNING_CERTNAME }} `
+                    -tr 'http://timestamp.digicert.com' `
+                    -v "$($file.FullName)" 
+            }
+        }
+        catch {
+            Write-Host "Error: $($_.Exception)"
+            throw
+        }
+        Write-Host "Signed files summary:"
+        Get-AuthenticodeSignature -FilePath $files
+
     - name: Publish
       #Publish to PS Gallery
       shell: pwsh
+      if: ${{ github.event_name != 'workflow_dispatch' }}
       env:
-        SECRET: ${{ secrets.PSGallery_APIKey }}
+        SECRET: ${{ secrets.GC_PSGALLERY_APIKEY }}
       run: |
-        write-host "Publishing from: $env:GITHUB_WORKSPACE\Module\GetLicenseInfo"
+        write-host "Publishing from: $env:GITHUB_WORKSPACE\Module\$env:MODULE_NAME"
         try
         {
-          #setup PSModulePath
           $env:PSModulePath = "$env:PSModulePath;$env:GITHUB_WORKSPACE\Module"
           "PSModulePath: $env:PSModulePath"
-
-          Publish-Module -Path "$env:GITHUB_WORKSPACE\Module\GetLicenseInfo" -NuGetApiKey "$env:SECRET"
+          Publish-Module -Path "$env:GITHUB_WORKSPACE\Module\$env:MODULE_NAME" -NuGetApiKey "$env:SECRET"
         }
         catch
         {
           Write-Host "Error: $($_.Exception)"
           throw
         }
+  

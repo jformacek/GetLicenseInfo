@@ -1,43 +1,5 @@
-Function Get-ProductTable
-{
-    param()
-
-    begin
-    {
-        #see https://learn.microsoft.com/en-us/azure/active-directory/enterprise-users/licensing-service-plan-reference
-        $uri = 'https://download.microsoft.com/download/e/3/e/e3e9faf2-f28b-490a-9ada-c6089a1fc5b0/Product%20names%20and%20service%20plan%20identifiers%20for%20licensing.csv'
-    }
-    process
-    {
-        $tree = @{}
-        $rsp = Invoke-WebRequest -Uri $uri
-        $displayNamesTable = [System.Text.Encoding]::UTF8.GetString($rsp.Content) | ConvertFrom-Csv -Delimiter ','
-        foreach($descriptor in $displayNamesTable)
-        {
-            if($null -eq $tree[$descriptor.GUID])
-            {
-                $tree[$descriptor.GUID] = @{
-                    Name = $descriptor.String_Id
-                    DisplayName = $descriptor.Product_Display_Name
-                    Description = "$($descriptor.Product_Display_Name) ($($descriptor.String_Id))"
-                    Plans = @{}
-                }
-            }
-            $product = $tree[$descriptor.GUID]
-            if($null -eq $product.Plans[$descriptor.Service_Plan_Id])
-            {
-                $product.Plans[$descriptor.Service_Plan_Id] = @{
-                    Name = $descriptor.Service_Plan_Name
-                    DisplayName = $descriptor.Service_Plans_Included_Friendly_Names
-                    Description = "$($descriptor.Service_Plans_Included_Friendly_Names) ($($descriptor.Service_Plan_Name))"
-                }
-            }
-        }
-        $tree
-    }
-}
-
-function Connect-Tenant
+#region Public commands
+function Connect-LicenseTenant
 {
     <#
 .SYNOPSIS
@@ -106,6 +68,11 @@ function Connect-Tenant
             #tries to get parameters from environment and token from internal endpoint provided by Azure MSI support
         $UseManagedIdentity,
 
+        [Parameter(ParameterSetName = 'ExistingFactory')]
+        [object]
+            #Existing factory to use rather than create a new one
+        $Factory,
+
         [Parameter()]
         [System.Net.WebProxy]
             #Proxy configuration for cases when internet is begind proxy
@@ -137,6 +104,10 @@ function Connect-Tenant
                         $script:AuthFactory = New-AadAuthenticationFactory -ClientId $clientId -UseManagedIdentity
                         break;
                     }
+                    'ExistingFactory' {
+                        $script:AuthFactory = $Factory
+                        break;
+                    }
                 }
                 $script:AuthFactory
         }
@@ -145,8 +116,7 @@ function Connect-Tenant
         }
     }
 }
-
-Function Get-Info
+Function Get-LicenseInfo
 {
 <#
 .SYNOPSIS
@@ -223,17 +193,11 @@ param
             }
         }
 
-        if($null -eq $script:AuthFactory)
-        {
-            throw "Please call 'Connect-LicenseTenant' first"
-        }
-
         if($null -eq $script:prods) {$script:prods = Get-ProductTable}
 
         if($null -eq $script:orgSkus)
         {
-            $rsp = Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/subscribedSkus' -Headers (Get-AadToken -AsHashTable -Factory $script:authFactory -Scopes 'https://graph.microsoft.com/.default')
-            $script:orgSkus = $rsp.Value
+            $script:orgSkus = Get-SubscribedSkus
         }
         if($IncludedSkus.Count -gt 0)
         {
@@ -300,7 +264,89 @@ param
         }
     }
 }
+function Get-TenantSubscribedLicense
+{
+    begin
+    {
+        if($null -eq $script:prods) {$script:prods = Get-ProductTable}
 
+        if($null -eq $script:orgSkus)
+        {
+            $script:orgSkus = Get-SubscribedSkus
+        }
+    }
+    process
+    {
+        $script:orgSkus
+    }
+}
+#endregion Public commands
+#region Internal commands
+Function Get-ProductTable
+{
+    param()
+
+    begin
+    {
+        #see https://learn.microsoft.com/en-us/azure/active-directory/enterprise-users/licensing-service-plan-reference
+        $uri = 'https://download.microsoft.com/download/e/3/e/e3e9faf2-f28b-490a-9ada-c6089a1fc5b0/Product%20names%20and%20service%20plan%20identifiers%20for%20licensing.csv'
+    }
+    process
+    {
+        $tree = @{}
+        $rsp = Invoke-WebRequest -Uri $uri
+        $displayNamesTable = [System.Text.Encoding]::UTF8.GetString($rsp.Content) | ConvertFrom-Csv -Delimiter ','
+        foreach($descriptor in $displayNamesTable)
+        {
+            if($null -eq $tree[$descriptor.GUID])
+            {
+                $tree[$descriptor.GUID] = @{
+                    Name = $descriptor.String_Id
+                    DisplayName = $descriptor.Product_Display_Name
+                    Description = "$($descriptor.Product_Display_Name) ($($descriptor.String_Id))"
+                    Plans = @{}
+                }
+            }
+            $product = $tree[$descriptor.GUID]
+            if($null -eq $product.Plans[$descriptor.Service_Plan_Id])
+            {
+                $product.Plans[$descriptor.Service_Plan_Id] = @{
+                    Name = $descriptor.Service_Plan_Name
+                    DisplayName = $descriptor.Service_Plans_Included_Friendly_Names
+                    Description = "$($descriptor.Service_Plans_Included_Friendly_Names) ($($descriptor.Service_Plan_Name))"
+                }
+            }
+        }
+        $tree
+    }
+}
+function Get-SubscribedSkus
+{
+    process
+    {
+        if($null -eq $script:AuthFactory)
+        {
+            throw "Please call 'Connect-LicenseTenant' first"
+        }
+        $rsp = Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/subscribedSkus' -Headers (Get-AadToken -AsHashTable -Factory $script:authFactory -Scopes 'https://graph.microsoft.com/.default')
+        $rsp.value | ForEach-Object {
+            $name = ($script:prods[$_.skuId]).Name
+            $displayName = ($script:prods[$_.skuId]).DisplayName
+            if([string]::IsNullOrEmpty($displayName))
+            {
+                $displayName = $_.skuPartNumber
+            }
+            if([string]::IsNullOrEmpty($name))
+            {
+                $Name = $_.skuPartNumber
+            }
+
+            $_ | Add-Member -MemberType NoteProperty -Name DisplayName -Value $displayName -PassThru `
+                | Add-Member -MemberType NoteProperty -Name Name -Value $name
+        }
+        $rsp.Value
+    }
+}
 function ProcessUser
 {
     param
@@ -394,6 +440,8 @@ function ProcessUser
         $user
     }
 }
+#endregion Internal commands
+#region Module initialization
 if($null -eq 'TrustAllCertsPolicy' -as [type])
 {
     add-type @"
@@ -409,3 +457,4 @@ if($null -eq 'TrustAllCertsPolicy' -as [type])
 "@    
 }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+#endregion Module initialization

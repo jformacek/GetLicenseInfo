@@ -28,8 +28,6 @@ jobs:
         Copy-Item -Path "$env:GITHUB_WORKSPACE\LICENSE" -Destination "$env:GITHUB_WORKSPACE\Module\$moduleName\LICENSE.txt" -Force
         "Building module"
         &"$env:GITHUB_WORKSPACE\Workflow\BuildModule.ps1" -RootPath "$env:GITHUB_WORKSPACE" -ModuleName $moduleName
-        - name: Install AzureSignTool
-        run:  dotnet tool install --global AzureSignTool
    
     - name: Install AzureSignTool
       run:  dotnet tool install --global AzureSignTool
